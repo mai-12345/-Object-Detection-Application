@@ -3,7 +3,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
-
+from PIL import Image
 from pathlib import Path
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -118,54 +118,27 @@ upload_image = st.file_uploader(
     type=["jpg", "jpeg", "png", "webp"]
 )
 
-
 if upload_image is not None:
-
-    file_bytes = np.frombuffer(
-        upload_image.getvalue(),
-        dtype=np.uint8
-    )
-
+    file_bytes = np.asarray(bytearray(upload_image.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-    if img is None:
-        st.error("Invalid image file. Please upload another image.")
-        st.stop()
+    if img is not None:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    img = cv2.cvtColor(
-        img,
-        cv2.COLOR_BGR2RGB
-    )
+        st.subheader("Original Image")
+        st.image(Image.fromarray(img))
 
-    st.subheader("Original Image")
-    st.image(img, use_container_width=True)
-
-    try:
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
             data=img
         )
 
         detection_result = detector.detect(mp_image)
-
-        annotated_image = visualize(
-            img,
-            detection_result
-        )
+        annotated_image = visualize(img.copy(), detection_result)
 
         st.subheader("Detection Results")
-        st.image(
-            annotated_image,
-            use_container_width=True
-        )
+        st.image(Image.fromarray(annotated_image))
 
-        st.write(
-            f"Number of detected objects: {len(detection_result.detections)}"
-        )
-
-        if not detection_result.detections:
-            st.info("No objects detected in this image.")
-
-    except Exception as e:
-        st.error("Object detection failed.")
-        st.exception(e)
+        st.write(f"Number of detected objects: {len(detection_result.detections)}")
+    else:
+        st.error("Could not read the uploaded image.")
