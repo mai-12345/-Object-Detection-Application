@@ -1,3 +1,5 @@
+import base64
+import io
 import os
 import urllib.request
 
@@ -5,6 +7,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
+from PIL import Image
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
@@ -21,6 +24,21 @@ ROW_SIZE = 10
 FONT_SIZE = 1
 FONT_THICKNESS = 1
 TEXT_COLOR = (255, 0, 0)  # red, since the image is RGB
+
+
+def show_image(img_array, caption=None):
+    """Display an RGB numpy image embedded in the page (base64),
+    bypassing Streamlit's media file server."""
+    buf = io.BytesIO()
+    Image.fromarray(img_array).save(buf, format="JPEG", quality=90)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    st.markdown(
+        f'<img src="data:image/jpeg;base64,{b64}" '
+        f'style="width:100%; border-radius:8px;">',
+        unsafe_allow_html=True,
+    )
+    if caption:
+        st.caption(caption)
 
 
 def visualize(image, detection_result):
@@ -68,7 +86,7 @@ if upload_image is not None:
         img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
         st.subheader("Original Image")
-        st.image(img, use_container_width=True)
+        show_image(img)
 
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
@@ -80,6 +98,6 @@ if upload_image is not None:
         annotated_image = visualize(img.copy(), detection_result)
 
         st.subheader("Image After Detection")
-        st.image(annotated_image, use_container_width=True)
+        show_image(annotated_image)
 
         st.write(f"Number of detected objects: {len(detection_result.detections)}")
