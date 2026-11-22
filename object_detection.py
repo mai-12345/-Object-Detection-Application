@@ -4,143 +4,247 @@ import numpy as np
 import mediapipe as mp
 import os
 from PIL import Image
-
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 
-st.title("Object Detection Application")
-st.write("Upload an image to detect objects.")
-
-upload_image = st.file_uploader(
-    "Please Upload an Image",
-    type=['jpg', 'png', 'jpeg', 'webp']
+# -----------------------------
+# Page Configuration
+# -----------------------------
+st.set_page_config(
+    page_title="Object Detection App",
+    page_icon="🔍",
+    layout="wide"
 )
 
-MARGIN = 10
-ROW_SIZE = 10
-FONT_SIZE = 1
-FONT_THICKNESS = 1
-TEXT_COLOR = (255, 0, 0)
+st.title("Object Detection Application")
 
 
-def visualize(image, detection_result) -> np.ndarray:
+# -----------------------------
+# Model Configuration
+# -----------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "efficientdet_lite0.tflite")
+
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+# -----------------------------
+# Load Object Detector
+# -----------------------------
+@st.cache_resource
+def load_detector():
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"Model file not found: {MODEL_PATH}"
+        )
+
+    base_options = python.BaseOptions(
+        model_asset_path=MODEL_PATH
+    )
+
+    options = vision.ObjectDetectorOptions(
+        base_options=base_options,
+        score_threshold=0.5,
+        max_results=10
+    )
+
+    detector = vision.ObjectDetector.create_from_options(
+        options
+    )
+
+    return detector
+
+
+try:
+    detector = load_detector()
+    st.success("Object Detector loaded successfully!")
+
+except Exception as e:
+    st.error(f"Error loading model: {e}")
+    st.stop()
+
+
+# -----------------------------
+# Upload Image
+# -----------------------------
+uploaded_file = st.file_uploader(
+    "Please Upload an Image",
+    type=["jpg", "jpeg", "png", "webp"]
+)
+
+
+# -----------------------------
+# Draw Detection Results
+# -----------------------------
+def visualize(image, detection_result):
+
+    output_image = image.copy()
 
     for detection in detection_result.detections:
 
-        # Draw bounding box
         bbox = detection.bounding_box
 
-        start_point = (bbox.origin_x, bbox.origin_y)
-        end_point = (
-            bbox.origin_x + bbox.width,
-            bbox.origin_y + bbox.height
+        x = bbox.origin_x
+        y = bbox.origin_y
+        width = bbox.width
+        height = bbox.height
+
+        # Draw bounding box
+        cv2.rectangle(
+            output_image,
+            (x, y),
+            (x + width, y + height),
+            (0, 255, 0),
+            2
         )
 
-        cv2.rectangle(image, start_point, end_point, TEXT_COLOR, 3)
-
-        # Draw label and score
+        # Get category information
         category = detection.categories[0]
-        category_name = category.category_name
-        probability = round(category.score, 2)
 
-        result_text = f'{category_name} ({probability})'
-
-        text_location = (
-            MARGIN + bbox.origin_x,
-            MARGIN + ROW_SIZE + bbox.origin_y
+        label = (
+            category.category_name
+            if category.category_name
+            else category.display_name
         )
 
+        score = category.score
+
+        text = f"{label}: {score:.2f}"
+
+        # Draw label
         cv2.putText(
-            image,
-            result_text,
-            text_location,
-            cv2.FONT_HERSHEY_PLAIN,
-            FONT_SIZE,
-            TEXT_COLOR,
-            FONT_THICKNESS
+            output_image,
+            text,
+            (x, max(y - 10, 20)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 0, 0),
+            2
         )
 
-    return image
+    return output_image
 
 
-# STEP 2: Create an ObjectDetector object
+# -----------------------------
+# Process Uploaded Image
+# -----------------------------
+if uploaded_file is not None:
 
-MODEL_PATH = 'efficientdet_lite0.tflite'
+    try:
+        # Read uploaded image
+        image_bytes = uploaded_file.getvalue()
 
-if not os.path.exists(MODEL_PATH):
-    st.error(f"Model file not found: {MODEL_PATH}")
-    st.stop()
+        image_array = np.frombuffer(
+            image_bytes,
+            dtype=np.uint8
+        )
 
-base_options = python.BaseOptions(
-    model_asset_path=MODEL_PATH
-)
+        image_bgr = cv2.imdecode(
+            image_array,
+            cv2.IMREAD_COLOR
+        )
 
-options = vision.ObjectDetectorOptions(
-    base_options=base_options,
-    score_threshold=0.5
-)
+        if image_bgr is None:
+            st.error("Could not read the uploaded image.")
+            st.stop()
 
-detector = vision.ObjectDetector.create_from_options(options)
+        # Convert BGR to RGB
+        image_rgb = cv2.cvtColor(
+            image_bgr,
+            cv2.COLOR_BGR2RGB
+        )
 
-st.success("Object Detector loaded successfully!")
+        image_rgb = np.ascontiguousarray(image_rgb)
 
+        # Convert to PIL Image
+        original_image = Image.fromarray(image_rgb)
 
-# STEP 3: Upload and read image
+        # Display original image
+        st.subheader("Original Image")
 
-if upload_image is not None:
+        st.image(
+            original_image,
+            caption="Original Image",
+            use_container_width=True
+        )
 
-    file_bytes = np.frombuffer(
-        upload_image.getvalue(),
-        dtype=np.uint8
-    )
+        # -----------------------------
+        # Run Object Detection
+        # -----------------------------
+        mp_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=image_rgb
+        )
 
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        detection_result = detector.detect(mp_image)
 
-    if img is None:
-        st.error("Could not read the uploaded image.")
-        st.stop()
+        # Visualize results
+        annotated_image = visualize(
+            image_rgb,
+            detection_result
+        )
 
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # Convert result to PIL Image
+        result_image = Image.fromarray(annotated_image)
 
-    # Display Original Image
-    st.subheader("Original Image")
+        # Display detection results
+        st.subheader("Detection Results")
 
-    st.image(
-        Image.fromarray(img),
-        use_container_width=True
-    )
+        st.image(
+            result_image,
+            caption="Detected Objects",
+            use_container_width=True
+        )
 
+        # -----------------------------
+        # Detection Count
+        # -----------------------------
+        number_of_objects = len(
+            detection_result.detections
+        )
 
-    # STEP 4: Detect objects
+        st.write(
+            f"Number of detected objects: {number_of_objects}"
+        )
 
-    mp_image = mp.Image(
-        image_format=mp.ImageFormat.SRGB,
-        data=img
-    )
-
-    detection_result = detector.detect(mp_image)
-
-
-    # STEP 5: Visualize results
-
-    annotated_image = visualize(
-        img.copy(),
-        detection_result
-    )
-
-    st.subheader("Detection Results")
-
-    st.image(
-        Image.fromarray(annotated_image),
-        use_container_width=True
-    )
-
-    st.write(
-        f"Number of detected objects: {len(detection_result.detections)}"
-    )
-
-    if detection_result.detections:
         st.success("Object detection completed successfully!")
-    else:
-        st.warning("No objects detected. Try another image.")
+
+        # -----------------------------
+        # Save Output Image
+        # -----------------------------
+        output_filename = "detected_image.png"
+
+        output_path = os.path.join(
+            OUTPUT_DIR,
+            output_filename
+        )
+
+        result_image.save(
+            output_path,
+            format="PNG"
+        )
+
+        # Prepare image for download
+        from io import BytesIO
+
+        image_buffer = BytesIO()
+
+        result_image.save(
+            image_buffer,
+            format="PNG"
+        )
+
+        image_bytes_to_download = image_buffer.getvalue()
+
+        st.download_button(
+            label="Download Detection Result",
+            data=image_bytes_to_download,
+            file_name=output_filename,
+            mime="image/png"
+        )
+
+    except Exception as e:
+        st.error(f"Error processing image: {e}")
